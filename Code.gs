@@ -7,9 +7,14 @@ const CONFIG = Object.freeze({
   judges: [
     'Dr Anuar bin Md Amin',
     'Dr Helme Heli',
-    'Rosalina binti Basar'
+    'Rosliza binti Basar'
   ],
-  publishResults: true
+  judgeAliases: {
+    'ROSALINA BINTI BASAR': 'Rosliza binti Basar'
+  },
+  // Keputusan dibuka secara automatik selepas semua penilaian lengkap.
+  // Tukar kepada true hanya jika pentadbir mahu menerbitkannya lebih awal.
+  publishResults: false
 });
 
 const RUBRIC = [
@@ -177,6 +182,11 @@ function key_(value) {
   return normal_(value).toUpperCase();
 }
 
+function canonicalJudge_(value) {
+  const normalized = normal_(value);
+  return CONFIG.judgeAliases[key_(normalized)] || normalized;
+}
+
 function headerMap_(row) {
   const map = {};
   row.forEach(function (value, index) { map[key_(value)] = index; });
@@ -252,7 +262,7 @@ function scores_() {
     return {
       id: pick_(row, map, ['ID REKOD']),
       bil: pick_(row, map, ['BIL']),
-      hakim: pick_(row, map, ['NAMA HAKIM']),
+      hakim: canonicalJudge_(pick_(row, map, ['NAMA HAKIM'])),
       total: Number(pick_(row, map, ['JUMLAH KESELURUHAN'])) || 0,
       sections: {
         A: Number(pick_(row, map, ['JUMLAH A'])) || 0,
@@ -280,7 +290,7 @@ function bootstrap_() {
 }
 
 function validate_(payload, participant) {
-  const judge = normal_(payload.judge);
+  const judge = canonicalJudge_(payload.judge);
   if (CONFIG.judges.indexOf(judge) < 0) throw new Error('Nama hakim tidak sah.');
   if (!participant) throw new Error('Peserta tidak ditemui.');
   const incoming = payload.scores || {};
@@ -353,9 +363,6 @@ function saveScore_(payload) {
 }
 
 function winners_() {
-  if (!CONFIG.publishResults) {
-    return { success: true, published: false, message: 'Keputusan belum diterbitkan.' };
-  }
   const participants = participants_();
   const scores = scores_();
   const byParticipant = {};
@@ -377,6 +384,24 @@ function winners_() {
     item.total += score.total;
     item.judgesReceived += 1;
   });
+  const expected = participants.length * CONFIG.judges.length;
+  const progressComplete = scores.length === expected;
+  const canPublish = CONFIG.publishResults || progressComplete;
+  if (!canPublish) {
+    return {
+      success: true,
+      published: false,
+      rankingMethod: 'JUMLAH',
+      ranked: [],
+      message: 'Keputusan dikunci sehingga semua penilaian lengkap.',
+      progress: {
+        received: scores.length,
+        expected: expected,
+        complete: false
+      }
+    };
+  }
+
   const ranked = Object.keys(byParticipant).map(function (key) {
     const item = byParticipant[key];
     item.complete = item.judgesReceived === CONFIG.judges.length;
@@ -399,8 +424,8 @@ function winners_() {
     ranked: ranked,
     progress: {
       received: scores.length,
-      expected: participants.length * CONFIG.judges.length,
-      complete: scores.length === participants.length * CONFIG.judges.length
+      expected: expected,
+      complete: progressComplete
     }
   };
 }
